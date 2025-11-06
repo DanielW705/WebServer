@@ -7,15 +7,15 @@ public class Program
     public static void Main(string[] args)
     {
         Server server = new Server();
-        server.StartServer();
         ConsoleKeyInfo key = new ConsoleKeyInfo();
+        server.StartServer();
         do
         {
+            if (server.isStoped)
+                server.RestartServer();
 
-            Stopwatch stopwatch = Stopwatch.StartNew();
             server.OnListenigConnection();
-            stopwatch.Stop();
-            Console.WriteLine($"Execution Time: {stopwatch.ElapsedMilliseconds} ms");
+
             if (Console.KeyAvailable)
                 key = Console.ReadKey(true);
 
