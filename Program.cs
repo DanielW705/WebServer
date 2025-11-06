@@ -1,5 +1,6 @@
 ﻿using System.Diagnostics;
 using System.Threading;
+using System.Threading.Tasks;
 using WebServer.Models;
 
 public class Program
@@ -11,15 +12,10 @@ public class Program
         ConsoleKeyInfo key = new ConsoleKeyInfo();
         do
         {
-
-            Stopwatch stopwatch = Stopwatch.StartNew();
-            server.OnListenigConnection();
-            stopwatch.Stop();
-            Console.WriteLine($"Execution Time: {stopwatch.ElapsedMilliseconds} ms");
             if (Console.KeyAvailable)
                 key = Console.ReadKey(true);
 
         } while (key.Key != ConsoleKey.Q);
-
+        server.StopServer();
     }
 }
