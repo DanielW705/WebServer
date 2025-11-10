@@ -10,80 +10,102 @@ namespace WebServer.Models
     {
         private Socket httpSocket;
         private Task serverTask;
-        private CancellationTokenSource token = new CancellationTokenSource();
-
+        private CancellationTokenSource token = new();
+        private SemaphoreSlim concurrencyControl = new(5); // controla máximo 5 clientes
+        private int LastTaskEjecute = 0;
         public Server(int port = 82)
         {
+            if (port > 65535 || port < 1)
+            {
+                port = 82;
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine("El puerto no es valido, se ctomara el default");
+                Console.ResetColor();
+            }
+
             try
             {
                 httpSocket = new Socket(SocketType.Stream, ProtocolType.Tcp);
-                if (port > 65535 || port < 1)
-                {
-                    port = 80;
-                    Console.ForegroundColor = ConsoleColor.Red;
-                    Console.WriteLine("Error al inciar el servidor");
-                    Console.ResetColor();
-                }
                 IPEndPoint endpoint = new IPEndPoint(IPAddress.Any, port);
                 httpSocket.Bind(endpoint);
-                httpSocket.Listen(1);
+                httpSocket.Listen(5); // acepta hasta 100 conexiones pendientes
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"Servidor iniciado en puerto {port}");
+                Console.ResetColor();
             }
             catch (Exception ex)
             {
                 Console.ForegroundColor = ConsoleColor.Red;
-                Console.WriteLine("Error al inciar el servidor");
-                Console.WriteLine(ex.StackTrace);
+                Console.WriteLine("Error al iniciar el servidor");
+                Console.WriteLine(ex.Message);
                 Console.ResetColor();
             }
-            Console.ForegroundColor = ConsoleColor.Green;
-            Console.WriteLine("Inicio correcto");
-            Console.ResetColor();
         }
-        public async Task ListeningConnection()
+
+        public async Task HandlerAnswer(Socket client)
         {
-            byte[] bytes = new byte[2048];
-            do
+            //Espera a que haya un espacio para hacer la peticion
+            await concurrencyControl.WaitAsync();
+
+            try
             {
-                var client = await httpSocket.AcceptAsync();
-                var numBytes = await client.ReceiveAsync(bytes);
-                if (numBytes > 0)
+                byte[] buffer = new byte[2048];
+                int bytesRead = await client.ReceiveAsync(buffer);
+
+                if (bytesRead > 0)
                 {
-                    Stopwatch stopwatch = Stopwatch.StartNew();
-                    var data = Encoding.ASCII.GetString(bytes, 0, numBytes);
-                    stopwatch.Stop();
+                    Stopwatch sw = Stopwatch.StartNew();
+                    string data = Encoding.ASCII.GetString(buffer, 0, bytesRead);
+                    sw.Stop();
 
-
+                    Console.WriteLine($"No de concurrencia: {concurrencyControl.CurrentCount}");
                     Console.WriteLine("------Request------");
                     Console.WriteLine(data);
                     Console.WriteLine("------End of Request------");
-                    Console.WriteLine($"Execution Time: {stopwatch.ElapsedMilliseconds} ms");
+                    Console.WriteLine($"Tiempo de ejecución: {sw.ElapsedMilliseconds} ms");
 
-                    string resHeader = "HTTP/1.1 200 Everything is Fine\nServer: my_csharp_server\nContent-Type: text/plain; charset: UTF-8\n\n";
-                    string resBody = "Hola mundo desde servidor";
+                    string resHeader =
+                        "HTTP/1.1 200 OK\r\n" +
+                        "Server: CSharpServer\r\n" +
+                        "Content-Type: text/plain; charset=UTF-8\r\n\r\n";
 
-                    string resStr = resHeader + resBody;
+                    string resBody = $"Hola mundo desde servidor! Fecha: {DateTime.Now}";
+                    byte[] responseData = Encoding.ASCII.GetBytes(resHeader + resBody);
 
-                    byte[] resData = Encoding.ASCII.GetBytes(resStr);
-
-                    await client.SendToAsync(resData, client.RemoteEndPoint);
-                    client.Shutdown(SocketShutdown.Both);
-                    client.Close();
+                    await client.SendAsync(responseData);
                 }
-            } while (true);
-        }
-        public void StopServer() => token.Cancel();
-        public void StartServer()
-        {
-            try
-            {
-                var factory = new TaskFactory(token.Token);
-                serverTask = factory.StartNew(() => ListeningConnection());
             }
             catch (Exception ex)
             {
-                throw ex;
+                Console.WriteLine($"Error procesando cliente: {ex.Message}");
+            }
+            finally
+            {
+                client.Close();
+                concurrencyControl.Release();
             }
         }
 
+        public async Task ListeningConnection()
+        {
+            while (!token.Token.IsCancellationRequested)
+            {
+                var client = await httpSocket.AcceptAsync();
+                _ = Task.Run(() => HandlerAnswer(client)); // se lanza concurrentemente
+            }
+        }
+
+        public void StartServer()
+        {
+            serverTask = Task.Run(() => ListeningConnection());
+        }
+
+        public void StopServer()
+        {
+            token.Cancel();
+            httpSocket.Close();
+            Console.WriteLine("Servidor detenido");
+        }
     }
 }
